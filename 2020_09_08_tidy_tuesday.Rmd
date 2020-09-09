@@ -1,0 +1,245 @@
+---
+title: "TidyTemplate"
+date: 2020-09-09
+output: html_output
+editor_options: 
+  chunk_output_type: console
+---
+
+# TidyTuesday
+
+
+```{r setup, include=FALSE}
+
+knitr::opts_chunk$set(echo = TRUE, cache = TRUE, warning = FALSE, message = FALSE,
+                      dpi = 180, fig.width = 8, fig.height = 5)
+
+library(tidyverse)
+library(tidytuesdayR)
+library(scales)
+theme_set(theme_light())
+```
+
+# Load the weekly Data
+
+Dowload the weekly data and make available in the `tt` object.
+
+```{r Load}
+
+tt <- tt_load("2018-11-13")
+tt
+```
+
+
+# Readme
+
+```{r Readme, eval = interactive()}
+
+malaria_inc_raw <- tt$malaria_inc
+malaria_deaths_raw <- tt$malaria_deaths
+malaria_deaths_age_raw <- tt$malaria_deaths_age
+
+```
+
+
+# Clean Data
+
+Take an initial look at the format of the data available and clean it.
+
+```{r Glimpse}
+
+malaria_inc <- malaria_inc_raw %>% 
+    rename(Incedence_per_1000 = 4) %>% 
+    janitor::clean_names()
+
+malaria_deaths <- malaria_deaths_raw %>% 
+    rename(Death_per_100K = 4) %>% 
+    janitor::clean_names()
+
+malaria_deaths_age <- malaria_deaths_age_raw %>% 
+    select(-X1) %>% 
+    janitor::clean_names()
+
+```
+
+
+```{r}
+#install.packages("malariaAtlas")
+kenya_pr <- as_tibble(malariaAtlas::getPR(country = "Kenya",species = "Both")) %>% 
+    filter(!is.na(pr))
+```
+
+```{r}
+kenya_pr %>%
+    group_by(year_start) %>%
+    summarise(
+        examined = sum(examined),
+        positive = sum(positive),
+        studies = n(),
+        pr = positive / examined
+    ) %>%
+    ggplot(aes(year_start, pr)) +
+    geom_line(size = 1)
+```
+
+```{r}
+india_pr <- tbl_df(malariaAtlas::getPR(country = "India",species = "Both"))
+```
+
+```{r}
+india_pr %>%
+    group_by(year_start) %>%
+    summarise(
+        examined = sum(examined),
+        positive = sum(positive),
+        studies = n(),
+        pr = positive / examined
+    ) %>%
+    ggplot(aes(year_start, pr)) +
+    geom_line(size = 1)
+```
+
+```{r}
+india_pr %>% 
+    ggplot(aes(longitude, latitude, color = year_start)) +
+    geom_point() +
+    borders("world", regions = "India")
+
+```
+
+```{r}
+kenya_pr %>% 
+    ggplot(aes(longitude, latitude, color = year_start)) +
+    geom_point(size =2) +
+    borders("world", regions = "kenya")
+
+```
+
+```{r}
+kenya_pr %>% 
+    ggplot(aes(longitude, latitude, color = pr)) +
+    geom_point(size =2) +
+    borders("world", regions = "kenya") +
+    scale_color_gradient2(low = "red", high = "black",midpoint = 0.5,
+                          labels = percent_format()) +
+  coord_map()
+```
+
+```{r}
+kenya_pr %>%
+  mutate(decade = 10 * year_start %/% 10) %>%
+  group_by(decade) %>%
+  ggplot(aes(longitude, latitude, color = pr)) +
+  geom_point(size = 2) +
+  borders("world", regions = "kenya") +
+  scale_color_gradient2(
+    low = "red",
+    high = "black",
+    midpoint = 0.5,
+    labels = percent_format()
+  ) +
+  facet_wrap(~decade)
+```
+
+```{r}
+malaria_inc_processed <- malaria_inc %>% 
+  mutate(incidence = incedence_per_1000/1000,
+         incedence_per_1000  = NULL) 
+
+malaria_inc_processed %>% 
+  filter(!code == "TUR") %>% 
+  pivot_wider(names_from = year, values_from = incidence) %>% 
+  janitor::clean_names() %>% 
+  mutate(change = x2015 - x2000) %>% 
+  ggplot(aes(x2015, change)) +
+  geom_point() +
+  geom_text(aes(label = code), hjust = 1, vjust = 1, size = 3)
+  
+```
+
+```{r}
+malaria_inc_processed %>%
+  filter(year == 2015) %>%
+  inner_join(map_data("world"), by = c(entity = "region"))  %>%
+  ggplot(aes(long, lat, group = group, fill = incidence)) +
+  geom_polygon() +
+  scale_fill_gradient2(
+    low = "red",
+    high = "blue",
+    midpoint = 0.2,
+    labels = percent_format()
+  ) +
+  coord_map()
+
+```
+
+```{r}
+malaria_inc_processed %>%
+  inner_join(map_data("world"), by = c(entity = "region"))  %>%
+  filter(incidence<1) %>% 
+  ggplot(aes(long, lat, group = group, fill = incidence)) +
+  geom_polygon() +
+  scale_fill_gradient2(
+    low = "blue",
+    high = "red",
+    midpoint = 0.2,
+     labels = percent_format()
+  ) +
+  facet_wrap(~year) +
+  coord_map()
+```
+
+```{r}
+malaria_deaths %>% 
+  filter(code %in% sample(unique(code), 10)) %>% 
+  ggplot(aes(year, death_per_100k, color = entity)) +
+  geom_line()
+```
+
+```{r}
+malaria_deaths %>%
+  inner_join(map_data("world"), by = c(entity = "region"))  %>%
+#  filter(year == 1990) %>% 
+  ggplot(aes(long, lat, group = group, fill = death_per_100k)) +
+  geom_polygon() +
+  scale_fill_gradient2(
+    low = "blue",
+    high = "red",
+    midpoint = 100,
+  ) +
+  facet_wrap(~year)
+```
+
+### Lets animate it across years
+
+```{r}
+library(gganimate)
+
+p1 <- malaria_deaths %>%
+  inner_join(map_data("world"), by = c(entity = "region"))  %>%
+  ggplot(aes(long, lat, group = group, fill = death_per_100k)) +
+  geom_polygon() +
+  scale_fill_gradient2(
+    low = "blue",
+    high = "red",
+    midpoint = 100,
+  ) +
+  transition_manual(year)
+
+
+```
+
+```{r}
+p2 <- malaria_deaths %>%
+  inner_join(map_data("world"), by = c(entity = "region"))  %>%
+  ggplot(aes(long, lat, group = group, fill = death_per_100k)) +
+  geom_polygon() +
+  scale_fill_gradient2(
+    low = "blue",
+    high = "red",
+    midpoint = 100,
+  ) +
+  transition_time(year)
+```
+
+#### End
